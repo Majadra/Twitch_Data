@@ -1,0 +1,201 @@
+---
+title: "SullyGnome_Srape"
+author: "Ran K"
+date: "11/6/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(RSelenium)
+library(rvest)
+library(tidyverse)
+```
+
+# Introduction and setup.
+
+This project would have not been possible without the amazing 2 part lecture given in **useR! 2018** conference by **Hanjo Odentaal**. <br>
+Links - [Part1](https://www.youtube.com/watch?v=OxbvFiYxEzI&t=4284s&ab_channel=RConsortium) , [Part2](https://www.youtube.com/watch?v=JcIeWiljQG4&ab_channel=RConsortium). <br> <br>
+
+In order to correctly scrape using Rselenium and docker - we should install **Docker Toolbox** and **Tight VNC** on our computer, then set up our docker container the command 
+1. Lunch docker and set up a chrome enironment, the command is - _"docker run --name chrome -v /dev/shm:/dev/shm -d -p 4445:4444 -p 5901:5900 selenium/standalone-chrome-debug:latest"._ <br>
+We should then type the command _"docker ps -a"_ to verify the container is initiated. <br>
+Last step is launching Tight VNC and in order to view what our code does. 
+
+# Part 1 - Web Scraping
+
+
+
+
+## Setting up RSelenium and prepering useful functions.
+
+If the instructions were followed correctly, we can set up our RSelenium server and directly navigate ourself into the site we would like to scrape information from.
+
+```{r Web_scraping_prep}
+remDr <- remoteDriver(remoteServerAddr = "192.168.99.100", port = 4445L, browser = "chrome")
+remDr$open()
+
+Display100Games <- function() {
+  # This function uses a dropdown box to display 100 articles per page instead of the default 50
+  DropDown_box <- 
+    remDr$findElement(using = 'xpath',value = '//*[@id="tblControl_length"]/label/select/option[4]')
+  DropDown_box$clickElement()
+}
+
+Next_Page <- function() { # This function will navigate press the "next button".
+  Next_button <- remDr$findElement(using = 'id',value =  'tblControl_next')
+  Next_button$clickElement()
+}
+
+snooze <- function() { # Slow and steady is definatly better when you are scraping.
+  time <- runif(n = 1, min = 4, max = 6)
+  cat("Resting",round(time,digits = 2),"seconds \n")
+  Sys.sleep(time)
+  
+}
+
+Month_List <- #We make a list of months in order to easly string together the month and the year
+  c("january","february","march","april","may","june",
+    "july","august","september","october","november","december")
+
+df <- data.frame() # This will be our final data frame
+```
+
+## Scraping our data
+
+The assemble the database ill preform 2 scraping operations.
+1. Scraping historical data regarding each specific game (we choose to scrape 200 games per month). <br>
+2. Scraping the general data regarding the total views on twich for a specific month.
+
+### Game specific monthly data
+
+Scraping the javascript table for each specific month using RSelenium and Rvest.
+
+```{r Web_scraping_game_specific}
+
+for (year in c(2016:2020)) {
+  for (month in Month_List) {
+    
+    # First we will load the appropriate page
+    remDr$navigate(paste0("https://www.sullygnome.com/games/",year,month,"/watched"))
+    cat("Now scraping - \n",remDr$getCurrentUrl()[1][[1]],"\n",sep = "")
+    
+    snooze()
+    
+    if (year == 2020 && month == "november") {
+      print("Stopping operations")
+      break
+    } # if
+    
+    Display100Games() # Just to make sure ill use the function every time we load a page
+    
+    for (i in seq(1,2)) { 
+      # As we will grab 200 games each month, we will need to repeat the process 10 time.
+      
+     webpage <- read_html(remDr$getPageSource()[[1]])
+     Sys.sleep(1.5)
+     temp_df <- webpage %>% html_node("table") %>% html_table()
+     #temp_df <- temp_df[,-c(1,2,12)] # Removing empty columns.
+     temp_df["Date"] <- as.Date(paste("01",month,year), format = "%d %B %Y") # adding a column with the date.
+     df <- rbind(temp_df,df) # Binding the temporary dataframe to the full one.
+     
+     Next_Page()
+     snooze()
+     
+    } # for loop games
+  } # for loop month
+} # for loop year
+
+# This dataset will need some cleaning, we will save the raw data and clean it later
+
+write.csv(df,"RawData/Twitch_game_data_raw.csv",row.names = FALSE)
+```
+
+### General monthly data
+
+Scraping global monthly data using Rvest.
+
+```{r Web_scraping_total}
+
+temp_df <-  # Preparing the dataframe to 
+  data.frame(Hours_watched = as.numeric(), Avg_viewers = as.numeric(), Peak_viewers = as.numeric(), 
+                   Streams = as.numeric(), Avg_channels = as.numeric(), Games_streamed = as.numeric(),
+             Date = as.character())
+
+
+for (year in c(2016:2020)) {
+  for (month in Month_List) {
+    
+    if (year == 2020 && month == "november") {
+      print("Finished")
+      break
+    }
+    
+    webpage <- read_html(paste0("https://www.sullygnome.com/",year,month))
+    cat("Extracting general data from",month,year,"\n")
+    snooze()
+    temp <- webpage %>% html_nodes(".InfoStatPanelTLCell") %>% html_text() # Scraping the general information
+    temp <- append(temp,paste(month,year)) # Adding the date
+    
+    temp_row <- (match(year,c(2016:2020))-1)* 12 + match(month,Month_List)
+    # Creating a temporary variable to indicate the current row in dataframe:
+    # row = (Year -1) * 12 + month 
+    for (i in 1:length(temp)) { # We will populate the dataframe one cell at a time
+      temp_df[temp_row,i] <- temp[i]
+    } # for loop i
+
+  } # for loop month
+} # for loop year
+
+write.csv(temp_df,"RawData/Twitch_global_data_raw.csv")
+```
+
+
+## Cleaning the data
+
+We need to do a little bit of cleaning in the "twitch_game_data" file.
+
+```{r Cleaning_data}
+
+
+
+df <- read.csv("RawData/Twitch_game_data_raw.csv",header = TRUE)
+head(df)
+df <- df[,-c(1,12)]
+names(df) <- c("Rank","Game","Hours_watched","Hours_Streamed","Peak_viewers","Peak_channels","Streamers","Avg_viewers","Avg_channels","Avg_viewer_ratio","Date")
+
+df$Hours_watched <- gsub(" hours","",df$Hours_watched)
+df$Hours_Streamed <- gsub(" hours","",df$Hours_Streamed)
+
+for (column in 3:10) {
+  df[,column] <- as.numeric(gsub(",","", df[,column]))
+}
+df <- df[order(df$Date,df$Rank),]
+df <- df[,c(2,1,11,3:10)]
+df["Month"] <- sub("\\d{4}-","",df$Date)
+df["Month"] <- sub("-01","",df$Month)
+df["Year"] <- sub("(?<=\\d{4}).+$","",df$Date,perl = TRUE)
+df <- df[,-3]
+df <- df[,c(1,2,11,12,3:10)]
+write.csv(df,"Datasets/Twitch_game_data.csv",row.names = FALSE)
+
+
+df2 <- read.csv("RawData/Twitch_global_data_raw.csv",header = TRUE)
+df2 <- df2[,-1]
+df2["Month"] <- sub(" \\d{4}$","",df2$Date)
+df2["Month"] <- match(df2$Month,Month_List)
+df2["Year"] <- sub("^\\w+ ","",df2$Date)
+df2 <- df2[,-7]
+for (column in 1:6) {
+  df2[,column] <- as.numeric(gsub(",","", df2[,column]))
+}
+df2 <- df2[,c(8,7,1:6)]
+
+write.csv(df2,"Datasets/Twitch_global_data.csv",row.names = FALSE)
+
+
+```
+
+
+
+
