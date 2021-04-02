@@ -1,0 +1,71 @@
+---
+title: "Twitch Analysis"
+author: "Ran K"
+date: "11/10/2020"
+output: 
+  html_document:
+    number_sections: true
+    toc: true
+    fig_width: 7
+    fig_height: 4.5
+    theme: cerulean
+    highlight: tango
+    code_folding: hide
+  
+---
+
+## Setup and datasets loading
+
+```{r setup, include = TRUE}
+knitr::opts_chunk$set(echo = FALSE)
+library(tidyverse)
+```
+
+Now loading datasets -
+
+<br>
+
+
+```{r dataset_load}
+df_hist <- read.csv("Datasets/Twitch_game_data.csv")
+
+df_hist$Year <- as.factor(df_hist$Year)
+df_hist$Month <- as.factor(df_hist$Month)
+
+str(df_hist)
+
+df_general <- read.csv("Datasets/Twitch_global_data.csv")
+
+str(df_general)
+
+df_general$Year <- as.factor(df_general$Year)
+df_general$Month <- as.factor(df_general$Month)
+```
+
+
+
+## Plotting
+
+```{r Plotting, echo=FALSE}
+ggplot(data = df_general,aes(x = Month, y = Hours_watched/1000000, group = Year)) + 
+  geom_line(aes(color = Year),size = 1) +
+  labs(title = "Monthly watch times on twich",y = "Millions of hours") +
+  theme_bw()
+  
+Lol <- df_hist %>% filter(Game == "League of Legends") %>% mutate(watched = round(Hours_watched/10^6,3))
+ggplot(data = Lol%>% group_by(Year) %>% summarise(watched = sum(watched)), aes(x = Year, y = watched)) + 
+  geom_bar(stat = "identity", color = "black", fill = "lightblue") +
+  labs(title = "League of legends yearly watch time",subtitle = "In millions of hours") +
+  theme_bw()
+
+
+
+
+ggplot(data = Lol%>% group_by(Month) %>% summarise(watched = sum(watched)), aes(x = Month, y = watched)) + 
+  geom_bar(stat = "identity", color = "black", fill = "lightblue") +
+  labs(title = "League of legends Monthly watch time",subtitle = "In millions of hours") +
+  theme_bw()
+```
+
+
+### This is a work in progress

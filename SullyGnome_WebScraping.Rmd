@@ -10,6 +10,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(RSelenium)
 library(rvest)
 library(tidyverse)
+library(stringr)
 ```
 
 # Introduction and setup.
@@ -32,7 +33,7 @@ Last step is launching Tight VNC and in order to view what our code does.
 If the instructions were followed correctly, we can set up our RSelenium server and directly navigate ourself into the site we would like to scrape information from.
 
 ```{r Web_scraping_prep}
-remDr <- remoteDriver(remoteServerAddr = "192.168.99.100", port = 4445L, browser = "chrome")
+remDr <- remoteDriver(remoteServerAddr = "localhost", port = 4445L, browser = "chrome")
 remDr$open()
 
 Display100Games <- function() {
@@ -48,7 +49,7 @@ Next_Page <- function() { # This function will navigate press the "next button".
 }
 
 snooze <- function() { # Slow and steady is definatly better when you are scraping.
-  time <- runif(n = 1, min = 4, max = 6)
+  time <- runif(n = 1, min = 5, max = 7)
   cat("Resting",round(time,digits = 2),"seconds \n")
   Sys.sleep(time)
   
@@ -58,7 +59,19 @@ Month_List <- #We make a list of months in order to easly string together the mo
   c("january","february","march","april","may","june",
     "july","august","september","october","november","december")
 
-df <- data.frame() # This will be our final data frame
+# df <- data.frame() If we are just starting from nothing we can use an empty dataframe, but as I already did some
+# scraping before ill use the raw data in order to avoid scraping twice the same information
+df <- read.csv("RawData/Twitch_game_data_raw.csv")
+
+
+max_year = max(as.numeric(str_sub(df[,"Date"],1,4)))
+# Extracting the last year scraped
+max_month <- df %>%
+  filter(as.numeric(str_sub(Date,1,4)) == max_year) %>%
+  mutate(month = as.numeric(str_sub(df[1,"Date"],6,7))) %>%
+  select(month)
+max_month <- max(max_month)
+# Extracting the last month in the last year scraped
 ```
 
 ## Scraping our data
@@ -73,22 +86,25 @@ Scraping the javascript table for each specific month using RSelenium and Rvest.
 
 ```{r Web_scraping_game_specific}
 
-for (year in c(2016:2020)) {
-  for (month in Month_List) {
+for (year in c(2016:2021)) {
+  for (month in c(1:12)) {
+    if (year < max_year | (year == max_year & month < max_month)){
+      paste0(year,"-",month," - already scraped")
+      next
+    }
     
-    # First we will load the appropriate page
-    remDr$navigate(paste0("https://www.sullygnome.com/games/",year,month,"/watched"))
-    cat("Now scraping - \n",remDr$getCurrentUrl()[1][[1]],"\n",sep = "")
-    
-    snooze()
-    
-    if (year == 2020 && month == "november") {
+    if (year == 2021 && month == 4) {
       print("Stopping operations")
       break
     } # if
+    # First we will load the appropriate page
+    remDr$navigate(paste0("https://www.sullygnome.com/games/",year,Month_List[month],"/watched"))
+    cat("Now scraping - \n",remDr$getCurrentUrl()[1][[1]],"\n",sep = "")
+    
+    snooze()
+
     
     Display100Games() # Just to make sure ill use the function every time we load a page
-    
     for (i in seq(1,2)) { 
       # As we will grab 200 games each month, we will need to repeat the process 10 time.
       
@@ -96,9 +112,12 @@ for (year in c(2016:2020)) {
      Sys.sleep(1.5)
      temp_df <- webpage %>% html_node("table") %>% html_table()
      #temp_df <- temp_df[,-c(1,2,12)] # Removing empty columns.
-     temp_df["Date"] <- as.Date(paste("01",month,year), format = "%d %B %Y") # adding a column with the date.
-     df <- rbind(temp_df,df) # Binding the temporary dataframe to the full one.
+     temp_df["Date"] <- paste("01",month,year,sep = "-") # adding a column with the date.
+    if (nrow(df) > 0 ){
+      names(temp_df) <- names(df)  
+    } # if
      
+     df <- rbind(temp_df,df) # Binding the temporary dataframe to the full one.
      Next_Page()
      snooze()
      
@@ -123,21 +142,21 @@ temp_df <-  # Preparing the dataframe to
              Date = as.character())
 
 
-for (year in c(2016:2020)) {
-  for (month in Month_List) {
+for (year in c(2021:2021)) {
+  for (month in c(1:12)) {
     
-    if (year == 2020 && month == "november") {
+    if (year == 2021 && month == 3) {
       print("Finished")
       break
     }
     
-    webpage <- read_html(paste0("https://www.sullygnome.com/",year,month))
+    webpage <- read_html(paste0("https://www.sullygnome.com/",year,Month_List[month]))
     cat("Extracting general data from",month,year,"\n")
     snooze()
     temp <- webpage %>% html_nodes(".InfoStatPanelTLCell") %>% html_text() # Scraping the general information
     temp <- append(temp,paste(month,year)) # Adding the date
     
-    temp_row <- (match(year,c(2016:2020))-1)* 12 + match(month,Month_List)
+    temp_row <- (match(year,c(2016:2021))-1)* 12 + month
     # Creating a temporary variable to indicate the current row in dataframe:
     # row = (Year -1) * 12 + month 
     for (i in 1:length(temp)) { # We will populate the dataframe one cell at a time
@@ -160,7 +179,6 @@ We need to do a little bit of cleaning in the "twitch_game_data" file.
 
 
 df <- read.csv("RawData/Twitch_game_data_raw.csv",header = TRUE)
-head(df)
 df <- df[,-c(1,12)]
 names(df) <- c("Rank","Game","Hours_watched","Hours_Streamed","Peak_viewers","Peak_channels","Streamers","Avg_viewers","Avg_channels","Avg_viewer_ratio","Date")
 
@@ -172,8 +190,8 @@ for (column in 3:10) {
 }
 df <- df[order(df$Date,df$Rank),]
 df <- df[,c(2,1,11,3:10)]
-df["Month"] <- sub("\\d{4}-","",df$Date)
-df["Month"] <- sub("-01","",df$Month)
+df["Month"] <- sub("\\d{4}","",df$Date)
+df["Month"] <- sub("^1","",df$Month)
 df["Year"] <- sub("(?<=\\d{4}).+$","",df$Date,perl = TRUE)
 df <- df[,-3]
 df <- df[,c(1,2,11,12,3:10)]
@@ -183,8 +201,8 @@ write.csv(df,"Datasets/Twitch_game_data.csv",row.names = FALSE)
 df2 <- read.csv("RawData/Twitch_global_data_raw.csv",header = TRUE)
 df2 <- df2[,-1]
 df2["Month"] <- sub(" \\d{4}$","",df2$Date)
-df2["Month"] <- match(df2$Month,Month_List)
-df2["Year"] <- sub("^\\w+ ","",df2$Date)
+#df2["Month"] <- match(df2$Month,Month_List)
+df2["Year"] <- sub("^\\d+ ","",df2$Date)
 df2 <- df2[,-7]
 for (column in 1:6) {
   df2[,column] <- as.numeric(gsub(",","", df2[,column]))
