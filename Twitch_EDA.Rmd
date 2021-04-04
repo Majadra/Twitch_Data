@@ -18,54 +18,178 @@ output:
 
 ```{r setup, include = TRUE}
 knitr::opts_chunk$set(echo = FALSE)
+theme_set(theme_bw())
 library(tidyverse)
+library(scales)
+library(corrplot)
+library(broom)
+library(plm)
 ```
 
-Now loading datasets -
+Loading datasets
 
 <br>
 
 
 ```{r dataset_load}
-df_hist <- read.csv("Datasets/Twitch_game_data.csv")
+twitch_games <- read.csv("Datasets/Twitch_game_data.csv")
 
-df_hist$Year <- as.factor(df_hist$Year)
-df_hist$Month <- as.factor(df_hist$Month)
+twitch_games$Year <- as.factor(twitch_games$Year)
+twitch_games$Month <- as.factor(twitch_games$Month)
 
-str(df_hist)
+str(twitch_games)
 
-df_general <- read.csv("Datasets/Twitch_global_data.csv")
+twitch_global <- read.csv("Datasets/Twitch_global_data.csv")
 
-str(df_general)
+str(twitch_global)
 
-df_general$Year <- as.factor(df_general$Year)
-df_general$Month <- as.factor(df_general$Month)
+twitch_global$Year <- as.factor(twitch_global$Year)
+twitch_global$Month <- as.factor(twitch_global$Month)
 ```
 
 
 
 ## Plotting
 
+### Looking at global twitch statistics
+
 ```{r Plotting, echo=FALSE}
-ggplot(data = df_general,aes(x = Month, y = Hours_watched/1000000, group = Year)) + 
-  geom_line(aes(color = Year),size = 1) +
-  labs(title = "Monthly watch times on twich",y = "Millions of hours") +
-  theme_bw()
-  
-Lol <- df_hist %>% filter(Game == "League of Legends") %>% mutate(watched = round(Hours_watched/10^6,3))
-ggplot(data = Lol%>% group_by(Year) %>% summarise(watched = sum(watched)), aes(x = Year, y = watched)) + 
-  geom_bar(stat = "identity", color = "black", fill = "lightblue") +
-  labs(title = "League of legends yearly watch time",subtitle = "In millions of hours") +
-  theme_bw()
 
+twitch_global %>%
+  mutate(Num_month = as.numeric(Month) + (as.numeric(Year)-1)*12) %>% 
+ggplot(aes(x = Num_month, y = Hours_watched/1E6, group = Year)) + 
+  geom_col(aes(fill = Year)) +
+  labs(title = "Monthly watch hours on twitch",subtitle = "In millions of hours",x = "", y = "")
 
+twitch_global %>%
+  filter (Year != 2021) %>%
+  group_by(Year) %>% 
+  mutate(Sum_year = sum(Hours_watched)) %>%
+  ungroup() %>%
+  mutate(part_of_year = (Hours_watched/Sum_year)) %>%
+  ggplot(aes(x = Month, y = part_of_year)) + 
+  geom_point(color = "red", fill=alpha("orange", 0.3), alpha=0.7, shape=21, stroke=2) + 
+  geom_segment( aes(x=Month, xend=Month, y=0, yend=part_of_year), color = "blue", linetype = "dashed") +
+  facet_wrap(. ~ Year, scales = "free_y") +
+  labs(title = "Distribution of time watched - by year", x = "", y = "") +
+  scale_y_continuous(labels = scales::label_percent())
 
+twitch_global %>%
+  filter (Year != 2021) %>%
+  group_by(Month) %>% 
+  summarise(Sum_year = sum(Hours_watched)) %>%
+  mutate(Global_sum = sum(Sum_year),
+         Part_of_global = (Sum_year/Global_sum)) %>%
+  ggplot(aes(x = Month, y = Part_of_global)) + 
+  geom_point(color = "red", fill=alpha("orange", 0.3), alpha=0.7, shape=21, stroke=2) + 
+  geom_segment( aes(x=Month, xend=Month, y=0, yend=Part_of_global), color = "blue", linetype = "dashed") +
+  labs(title = "Distribution of time watched",subtitle = "Without 2021", x = "", y = "") + 
+  scale_y_continuous(labels = scales::label_percent())
 
-ggplot(data = Lol%>% group_by(Month) %>% summarise(watched = sum(watched)), aes(x = Month, y = watched)) + 
-  geom_bar(stat = "identity", color = "black", fill = "lightblue") +
-  labs(title = "League of legends Monthly watch time",subtitle = "In millions of hours") +
-  theme_bw()
 ```
+We can learn that watchtime on twitch has increased steadily from 2016, and actually skyrocketed since march 2020, when the world was starting to deal with covid - 19 and people self - confined themselfs to their homes.
+<br>
+regarding the distribution of time watched, the plots are are not showing any significant trend.
+
+### Correlation plot - global variables
+
+```{r cor_plot_global}
+corrplot(cor(twitch_global[,3:8]),method = "number")
+```
+<br>
+
+This does not surprise me, as there is a direct relationship between the numbers of viewers to the watchtime to the amount of streams and so on. <br>
+
+for that reason I think that there is no need to keep analyzing global statistics, let's look now at game-specific monthly data
+
+## Game Specific monthly data
+
+### Looking at most watched games
+
+<br>
+First i'd like to visualise which were the games the were on the top of the viewrship leader boards for most months
+
+```{r game_leaderbords_1}
+twitch_games %>%
+  filter(Rank == 1) %>%
+  group_by(Game) %>%
+  summarise(n = n()) %>%
+  mutate(Game = fct_reorder(Game, n)) %>%
+  head(20) %>%
+  ggplot(aes(x = Game, y = n)) + 
+  geom_col(fill = "tomato3",color = "black") + coord_flip() +
+  labs(x = "", y = "",title = "Number of months in most watched categories - top 1")
+
+
+
+```
+
+It is quite surprising to see that since 2016 there were only 7 categories that were on the top of the monthly viewership, with **League of Legends**, **Fortnite** and **Just Chatting** represeting all entries except 4 months.
+
+to gain more insight, ill create the same plot but this time ill filter to the top 5 categories.
+
+
+```{r game_leaderbords_2}
+top_5 <-
+  twitch_games %>%
+  filter(Rank <= 5) %>%
+  group_by(Game) %>%
+  summarise(n = n()) %>%
+  arrange(desc(n)) %>%
+  mutate(Game = fct_reorder(Game, n))
+  
+top_5 %>%
+  top_n(16,n) %>%
+  ggplot(aes(x = Game, y = n)) + 
+  geom_col(fill = "tomato2",color = "black") + coord_flip() +
+  labs(x = "", y = "",title = "Number of months in most watched categories - top 5", caption = paste0("A total number of ", nrow(top_5)," different categories were in the top 5 most watched for at least 1 month"))
+
+top_20 <-
+  twitch_games %>%
+  filter(Rank <= 20) %>%
+  group_by(Game) %>%
+  summarise(n = n()) %>%
+  arrange(desc(n)) %>%
+  mutate(Game = fct_reorder(Game, n))
+
+  top_20 %>%
+    top_n(16,n) %>%
+  ggplot(aes(x = Game, y = n)) + 
+  geom_col(fill = "tomato1",color = "black") + coord_flip() +
+  labs(x = "", y = "",title = "Number of months in most watched categories - top 20", caption = paste0("A total number of ", nrow(top_20)," different categories were in the top 20 most watched for at least 1 month"))
+
+  rm(top_5,top_20)
+```
+<br>
+Looking at the 2 wider plots we can learn that **League of Legends** is the only category that had been consistantly placed in the top 5 most watched categories (for all 62 months), when we go even wider and look at the top 20 chart, the list of solid preformers because a little bigger, with **World of Warcraft**, **Dota 2** and **CS: GO** appearing in all 62 months and **Hearthstone** appearing in all but 1 month.
+
+```{r number_of_categories_top_n}
+# Finding out how many distict games have reached a each rank 
+category_in_rank <- data.frame(rank = numeric(), n = numeric())
+for (i in 1:200) {
+  temp <- 
+    data.frame(rank = i, n = n_distinct(twitch_games[which(twitch_games$Rank <= i),1]))
+  category_in_rank <- 
+    rbind(category_in_rank,temp)
+}
+
+category_in_rank %>%
+  ggplot(aes(x = rank, y = n)) + geom_line(size = 0.75) +
+  labs(title = "Numbers of distinct categories who reached a certain rank", y = "Number of distict categories") +
+  scale_x_continuous(breaks = c(1,50,100,150,200)) +
+  scale_y_continuous(breaks = c(7,500,1000,1604))
+```
+
+```{r forcasting_dota2_views}
+dota2 <- twitch_games %>%
+  filter(Game == "Dota 2") %>%
+  mutate(time = as.numeric(Month) + (as.numeric(Year)-2016)*12)
+fix <- 
+  plm(data = dota2,formula = Hours_watched ~ Peak_viewers+Peak_channels,model = "within") 
+
+
+```
+
 
 
 ### This is a work in progress

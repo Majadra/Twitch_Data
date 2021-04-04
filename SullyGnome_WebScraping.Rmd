@@ -190,10 +190,11 @@ for (column in 3:10) {
 }
 df <- df[order(df$Date,df$Rank),]
 df <- df[,c(2,1,11,3:10)]
-df["Month"] <- sub("\\d{4}","",df$Date)
-df["Month"] <- sub("^1","",df$Month)
-df["Year"] <- sub("(?<=\\d{4}).+$","",df$Date,perl = TRUE)
-df <- df[,-3]
+df <-
+  df %>%
+  mutate(Month = str_sub(df$Date,3,4),
+         Year = str_sub(df$Date,-4)) %>%
+  select(-Date)
 df <- df[,c(1,2,11,12,3:10)]
 write.csv(df,"Datasets/Twitch_game_data.csv",row.names = FALSE)
 
