@@ -13,17 +13,19 @@ output:
     code_folding: hide
   
 ---
-
+# Twitch Analysis
 ## Setup and datasets loading
 
-```{r setup, include = TRUE}
+```{r setup, include = FALSE}
 knitr::opts_chunk$set(echo = FALSE)
-theme_set(theme_bw())
+
 library(tidyverse)
 library(scales)
 library(corrplot)
 library(broom)
 library(plm)
+library(gridExtra)
+theme_set(theme_bw())
 ```
 
 Loading datasets
@@ -32,10 +34,13 @@ Loading datasets
 
 
 ```{r dataset_load}
-twitch_games <- read.csv("Datasets/Twitch_game_data.csv")
+twitch_games <- read.csv("Datasets/Twitch_game_data.csv",encoding = "")
 
-twitch_games$Year <- as.factor(twitch_games$Year)
-twitch_games$Month <- as.factor(twitch_games$Month)
+twitch_games <-
+  twitch_games %>%
+  mutate(Date = as.Date(paste("01",Month,Year,sep = "-"),format ="%d-%m-%Y"),
+         Year = as.factor(Year),
+         Month = as.factor(Month))
 
 str(twitch_games)
 
@@ -45,6 +50,11 @@ str(twitch_global)
 
 twitch_global$Year <- as.factor(twitch_global$Year)
 twitch_global$Month <- as.factor(twitch_global$Month)
+
+### This manages to make the string readable in the console and in the  dataframe
+twitch_games$Game[grep("<U\\+\\w+>",twitch_games$Game)] <-
+  as.character(parse(text=shQuote(gsub("<U\\+([A-Z0-9]+)>", "\\\\u\\1",
+                                     twitch_games$Game[grep("<U\\+\\w+>",twitch_games$Game)]))))
 ```
 
 
@@ -104,10 +114,10 @@ for that reason I think that there is no need to keep analyzing global statistic
 
 ## Game Specific monthly data
 
-### Looking at most watched games
+### Looking at most hours watched
 
 <br>
-First i'd like to visualise which were the games the were on the top of the viewrship leader boards for most months
+Let's visualise which were the games the were on the top of the viewrship leader boards for most months
 
 ```{r game_leaderbords_1}
 twitch_games %>%
@@ -120,14 +130,26 @@ twitch_games %>%
   geom_col(fill = "tomato3",color = "black") + coord_flip() +
   labs(x = "", y = "",title = "Number of months in most watched categories - top 1")
 
-
+twitch_games %>% 
+  filter(Game %in% (twitch_games %>%
+              filter(Rank == 1) %>%
+              group_by(Game) %>%
+              summarise(n = n()) %>% 
+                pull(Game))) %>%
+  mutate(Game = fct_reorder(Game,Rank)) %>%
+  ggplot(aes(x = Date,y = Rank,group = Game,color = Game)) + geom_line(size = 1.5, alpha = 0.75) + 
+  theme(legend.position = "right") + scale_y_reverse() +
+  labs(title = "Category rank over time")
+  
 
 ```
 
-It is quite surprising to see that since 2016 there were only 7 categories that were on the top of the monthly viewership, with **League of Legends**, **Fortnite** and **Just Chatting** represeting all entries except 4 months.
+It is quite surprising to see that since 2016 there were only 7 categories that were on the top of the monthly viewership, with **League of Legends**, **Fortnite** and **Just Chatting** represeting all entries except for 4 months.
 
-to gain more insight, ill create the same plot but this time ill filter to the top 5 categories.
+Out of these 7 categories, we can see that some are still highly ranked high on the watch leaderboards, and some like **PUGB** seems to have fallen of a bit. 
 
+
+Lets widen our view a little.
 
 ```{r game_leaderbords_2}
 top_5 <-
@@ -178,18 +200,146 @@ category_in_rank %>%
   labs(title = "Numbers of distinct categories who reached a certain rank", y = "Number of distict categories") +
   scale_x_continuous(breaks = c(1,50,100,150,200)) +
   scale_y_continuous(breaks = c(7,500,1000,1604))
+
+rm(temp,category_in_rank)
 ```
 
 ```{r forcasting_dota2_views}
-dota2 <- twitch_games %>%
-  filter(Game == "Dota 2") %>%
-  mutate(time = as.numeric(Month) + (as.numeric(Year)-2016)*12)
-fix <- 
-  plm(data = dota2,formula = Hours_watched ~ Peak_viewers+Peak_channels,model = "within") 
-
+twitch_games %>%
+  group_by(Game) %>%
+  summarise(total_watched = sum(Hours_watched)) %>%
+  mutate(Game = fct_reorder(Game,total_watched)) %>%
+  top_n(10,total_watched) %>%
+  ggplot(aes(x = Game,y = total_watched)) + geom_col(color = "black",fill = "blue") + coord_flip() +
+  scale_y_continuous(labels = label_comma(scale = 1/1E6)) +
+  labs(title = "Total hours watched",subtitle = "In millions of hours", x = "", y = "")
 
 ```
 
+## Amount of streamers
 
+```{r}
+twitch_games %>%
+  group_by(Game) %>%
+  summarise(Avg_streamers = mean(Streamers)) %>%
+  top_n(10,Avg_streamers) %>%
+  mutate(Game = fct_reorder(Game,Avg_streamers)) %>%
+  ggplot(aes(x = Game,y = Avg_streamers)) + geom_col(color = "black",fill = "deepskyblue1") + coord_flip() +
+  scale_y_continuous(labels = label_comma()) +
+  labs(title = "Average streamers per month", x = "", y = "")
+
+twitch_games %>% 
+  filter(Game %in% (twitch_games %>%
+                group_by(Game) %>%
+                summarise(Avg_streamers = mean(Streamers)) %>%
+                top_n(5,Avg_streamers) %>% 
+                pull(Game))) %>%
+  mutate(Game = fct_reorder(Game,Streamers)) %>%
+  ggplot(aes(x = Date,y = Streamers,group = Game,color = Game)) + geom_line(size = 1.5, alpha = 0.75) + 
+  theme(legend.position = "right") +labs(title = "Amount of streamers over time", x = "", y = "") +
+  scale_y_continuous(labels = comma)
+```
+<br>
+When we look at categories with most streamers we find mostly first person shooters and different battle royal games, with **Fortnite** trumping over the rest with more then twice the amount of average streames per month then the second place, **Call of Duty: Warzone**. <br>
+
+When we look at the amount of streamers over time, we can see that **Fortnite** had seen a massive drop in streams during 2019, but as the world started to spend more time at home the number of streamers picked up well.<br>
+It is also good to note that it seems that the hype from **Call of Duty: Warzone** seems to have died down. <br>
+
+The amount of streamers per category can really show which category is popular and when the hype is just a hype, to visualise this effect ill "fish out" games which peaked when they came out to track where they stand 1 year after.
+
+```{r tracking_new_games}
+first_appearance <-
+  twitch_games %>%
+    group_by(Game) %>%
+    summarise(Year = as.factor(min(as.numeric(Year))), Month = as.factor(min(as.numeric(Month))),Date = min(Date))
+
+first_appearance  <- first_appearance %>%
+  left_join(twitch_games, by = c("Game","Date")) %>%
+  filter(Date <= "2020-02-02",Rank <= 10, Date > "2016-01-01",
+         grepl("\\d{2,}",Game) == FALSE) # Removing yearly game releases like FIFA
+
+hype_plot <- twitch_games[0,]
+for (i in 1:nrow(first_appearance)) {
+  temp <- 
+    twitch_games %>%
+    filter(Game == first_appearance$Game[i],
+           Date %in% c(seq(first_appearance$Date[i],length = 12, by = "1 month")))
+  hype_plot <- rbind(hype_plot,temp)
+}
+hype_plot %>%
+  ggplot(aes(x = Date, y = Rank)) + geom_line(aes(color = Game)) + theme(legend.position = "bottom") +
+  labs(x = "", y = "")
+```
+
+
+## Analysing Dota 2 twitch data
+<br>
+As I am a Dota 2 player who ofter watches dota gameplay on twitch, i'd like to do some exploration
+
+
+```{r}
+dota2 <- twitch_games %>%
+  filter(Game == "Dota 2") %>%
+  arrange(Date)
+
+
+dota2 %>%
+  ggplot(aes(x = Date,y = Peak_viewers/1E3)) +
+  geom_line(size = 2.5, color = "coral3", alpha = 0.65) + 
+  geom_line(aes(y = Hours_watched/1E5),size = 2.5, color = "deepskyblue3", alpha = 0.65) +
+  scale_y_continuous(
+    name = "Peak viewers (thousands)",  # Features of the first axis
+    sec.axis = sec_axis(~./10, name="Hours watched (millions)", label = comma)) + 
+  # Add a second axis and specify its features
+  theme(axis.title.y = element_text(color = "coral3", size=13,face="bold"),
+  axis.title.y.right = element_text(color = "deepskyblue3", size=13, angle = 90,face="bold")) +
+  scale_x_date(breaks = "6 months", date_labels = "%b-%y") +
+  labs(x = "")
+  
+
+p1<-dota2 %>%
+  ggplot(aes(x = Date,y = Hours_Streamed, group = 1)) + geom_line(color = "blueviolet",size = 1.5,alpha = 0.75) + 
+  scale_y_continuous(labels = label_comma(scale = 1/1E3)) + 
+  labs(title = "Hours streamed, Dota 2 (thousands)",y = "",x = "") +
+  geom_smooth(method="lm",formula = y~x, se = FALSE, color = "gray17", alpha = 0.85)
+
+p2<-dota2 %>%
+  ggplot(aes(x = Date,y = Avg_viewers/1E3, group = 1)) + 
+  geom_line(color = "darkolivegreen2",size = 1.5,alpha = 0.75) + 
+  scale_y_continuous(labels = comma) + 
+  labs(title = "Average viewers, Dota 2 (thousands)",y = "",x = "") +
+  geom_smooth(method="lm",formula = y~x, se = FALSE, color = "gray17", alpha = 0.85)
+  
+grid.arrange(p1,p2)
+rm(p1,p2)
+```
+<br>
+The amount of dota2 being watched on twitch seems to fluctuates around 45 million hours a month, with some sharp peaks (August-18 and August-19) for example. There is a clear correlation between peak viewers and hours watched,
+when there are major dota2 tournaments, the amount of dota2 content consumed rises as well as the number of viewers.
+<br>
+The amount of dota 2 content being streamed seems to grow over time , with the major increase at the start of the covid-19 pandemic (around March-20), however, the amount of content being streamed seems to not have any effect on the average amount of viewers per month, which stays constant at around 55,000 different viewers with some fluctuations during major Esport tournaments. <br>
+
+### Biggest change in watch times
+
+```{r}
+dota_change <- dota2
+for (i in 2:nrow(dota2)) {
+  dota_change[i,"Change_Watch_time"] <- dota2$Hours_watched[i]-dota2$Hours_watched[i-1]
+}
+dota_change <- dota_change[-1,]
+
+dota_change %>%
+  slice_max(abs(Change_Watch_time),n = 10) %>%
+  mutate(Date = as.factor(format(Date,"%b-%y")),
+         Date = fct_reorder(Date,Change_Watch_time)) %>%
+  ggplot(aes(x = Date,y = Change_Watch_time,fill = Change_Watch_time >0)) + 
+  geom_col(color = "black") + coord_flip() + theme(legend.position = "none") +
+  scale_y_continuous(labels = label_comma(scale = 1/1E6),breaks = seq(-45E6,45E6,15E6)) +
+  labs(title = "Change in hours watched (millions of hours)", x = "", y = "")
+  
+
+```
+<br>
+This plot affirms that "The International", the biggest dota 2 tournament, is the souce that affects the amount of **Dota 2** being watched, during every august except 2020 (The International was posponed) the view time skyrockets and right after, during september, the view time returns to normal.
 
 ### This is a work in progress
